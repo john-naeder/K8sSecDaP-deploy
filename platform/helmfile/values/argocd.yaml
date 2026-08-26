@@ -1,8 +1,11 @@
+# Argo CD — cluster 2-3 node, RAM là ràng buộc chính.
+# server.insecure=true vì không còn ingress controller terminate TLS;
+# truy cập qua `kubectl port-forward` hoặc NodePort trên tailnet.
 global:
-  domain: argocd.zt.local        # override to actual exposed domain
+  domain: argocd.zt.local
 configs:
   params:
-    server.insecure: "true"      # TLS terminated upstream (Traefik/Cloudflare)
+    server.insecure: "true"
   cm:
     application.resourceTrackingMethod: annotation
 controller:

@@ -1,0 +1,141 @@
+# =============================================================================
+# GitLab CE — Omnibus, một pod.
+#
+# external_url phải là địa chỉ NGƯỜI DÙNG gõ, không phải Service nội bộ:
+# GitLab nhúng nó vào URL clone, link trong email và redirect sau login.
+# Đặt sai thì mọi thứ vẫn "chạy" cho tới lúc ai đó copy URL clone.
+#
+# Lưu ý storage: PVC do local-path cấp nằm trên đĩa của MỘT node và PV mang
+# nodeAffinity tới đúng node đó. Pod vì thế bị ghim theo dữ liệu chứ không
+# theo nodeSelector. Muốn chuyển sang node khác thì phải chép dữ liệu, xem
+# README.md mục "Đưa GitLab sang node khác".
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: gitlab
+  namespace: gitlab
+spec:
+  serviceName: gitlab
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: gitlab
+          # Đổi pin ở đây. Danh sách tag:
+          #   curl -s 'https://registry.hub.docker.com/v2/repositories/gitlab/gitlab-ce/tags?page_size=20' | jq -r '.results[].name'
+          # Trước khi đổi pin, đối chiếu key với template của image mới:
+          #   kubectl run k --image=gitlab/gitlab-ce:<tag> --command -- sleep 300
+          #   kubectl exec k -- grep -E '^#* *<key>\[' /opt/gitlab/etc/gitlab.rb.template
+          image: gitlab/gitlab-ce:19.3.0-ce.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 80 }
+            - { name: ssh,  containerPort: 22 }
+          env:
+            # Chỉ có tác dụng ở lần reconfigure đầu tiên khi DB còn rỗng.
+            # Đổi mật khẩu sau đó phải làm qua rails console, không phải qua đây.
+            - name: GITLAB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-secrets
+                  key: root_password
+            - name: GITLAB_OMNIBUS_CONFIG
+              value: |
+                external_url 'http://100.80.0.1:30080'
+                nginx['listen_port'] = 80
+                nginx['listen_https'] = false
+
+                # SSH đi qua NodePort 30022; con số này chỉ để GitLab in ra
+                # đúng URL clone SSH, nó không mở cổng nào cả.
+                gitlab_rails['gitlab_shell_ssh_port'] = 30022
+
+                # Không có dòng này thì kubelet probe nhận 404 trên /-/health,
+                # /-/liveness và /-/readiness — trong khi /users/sign_in vẫn 200
+                # và GitLab hoàn toàn khoẻ. Mặc định monitoring_whitelist chỉ có
+                # 127.0.0.0/8, và GitLab từ chối bằng 404 chứ không phải 403,
+                # nên triệu chứng trông hệt như "sai endpoint" thay vì "bị chặn".
+                # Probe của kubelet tới qua pod CIDR (Cilium SNAT về cilium_host).
+                gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '::1/128', '10.244.0.0/16', '192.168.0.0/24']
+
+                # --- Cắt RAM ---------------------------------------------
+                # Omnibus KHÔNG bỏ qua key lạ — nó fail cứng ngay ở phase đầu
+                # của reconfigure, container thoát sau 2 giây, và pod chỉ hiện
+                # CrashLoopBackOff. Mọi key dưới đây đã được đối chiếu với
+                # /opt/gitlab/etc/gitlab.rb.template của chính image 19.3.0.
+                #
+                # Hai key KHÔNG được khai ở 19.3 vì đã bị gỡ khỏi Omnibus:
+                #   grafana[...]     — bỏ từ 16.3
+                #   mattermost[...]  — còn hợp lệ ở 17.8, KHÔNG còn ở 19.3
+                #   pages_nginx[...] — không có trong template 19.3
+                prometheus_monitoring['enable'] = false
+                prometheus['enable'] = false
+                alertmanager['enable'] = false
+
+                # prometheus_monitoring đã tắt cả bộ, nhưng khai tường minh
+                # từng exporter thì lúc đọc lại config không phải suy luận.
+                node_exporter['enable'] = false
+                redis_exporter['enable'] = false
+                postgres_exporter['enable'] = false
+                pgbouncer_exporter['enable'] = false
+                gitlab_exporter['enable'] = false
+
+                registry['enable'] = false
+                gitlab_kas['enable'] = false
+                gitlab_pages['enable'] = false
+
+                puma['worker_processes'] = 2
+                puma['per_worker_max_memory_mb'] = 700
+                sidekiq['max_concurrency'] = 9
+
+                postgresql['shared_buffers'] = "256MB"
+                postgresql['max_connections'] = 200
+          # worker-1 có 7GB tổng; sau cilium-agent + kubelet còn khoảng 5.7GB.
+          # limit 6Gi là vượt quá chỗ thật sự có, nên hạ xuống 5Gi.
+          resources:
+            requests: { cpu: "1", memory: 2500Mi }
+            limits:   { memory: 5Gi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/gitlab }
+            - { name: logs,   mountPath: /var/log/gitlab }
+            - { name: data,   mountPath: /var/opt/gitlab }
+          # Lần khởi động đầu chạy reconfigure và migrate DB, thường 6-12 phút.
+          # startupProbe cho tối đa 20 phút rồi mới bàn giao cho liveness —
+          # không có nó, liveness sẽ giết pod giữa lúc migrate và lặp vô hạn.
+          startupProbe:
+            httpGet: { path: /-/health, port: http }
+            periodSeconds: 15
+            failureThreshold: 80
+          livenessProbe:
+            httpGet: { path: /-/health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet: { path: /-/readiness, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata: { name: config }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: { requests: { storage: 1Gi } }
+    - metadata: { name: logs }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: { requests: { storage: 5Gi } }
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources: { requests: { storage: 30Gi } }

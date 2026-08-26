@@ -1,0 +1,42 @@
+# =============================================================================
+# GitLab CE (Omnibus, một pod).
+#
+# Vì sao Omnibus chứ không phải chart cloud-native: chart đầy đủ cần ~6.3GB
+# trên MỘT node, mà worker chỉ có 7GB tổng. Omnibus gói toàn bộ vào một
+# container ~4GB. Khi cluster đủ 3 node thì migrate — xem platform/gitlab/README.md.
+#
+# Cần trước khi sync: Secret gitlab-secrets (platform/gitlab/secrets/bootstrap.sh)
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitlab
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:john-naeder/K8sSecDaP-deploy.git
+    targetRevision: main
+    path: platform/gitlab
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitlab
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }
+  ignoreDifferences:
+    # PVC size do provisioner ghi lại sau khi bind.
+    - group: ""
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/resources/requests/storage

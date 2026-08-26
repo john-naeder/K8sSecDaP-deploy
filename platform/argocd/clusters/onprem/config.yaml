@@ -1,4 +1,8 @@
-# BC2 on-prem cluster — active. Read by ApplicationSet `cluster-roots`.
+# Cluster on-prem — đang hoạt động. ApplicationSet `cluster-roots` đọc file này.
+#
+# Các trường trong `platform:` chỉ là metadata mô tả, ApplicationSet không
+# render gì từ chúng. Nhưng metadata sai còn tệ hơn không có metadata, nên
+# giữ nó khớp với thực tế.
 cluster:
   name: bc2-onprem
   server: https://kubernetes.default.svc
@@ -6,10 +10,10 @@ cluster:
 
 platform:
   provider: bare-metal
-  ingressClass: traefik
-  storageClass: local-path
-  exposure: cloudflared
-  cni: calico                  # BC2 standard — see cni/calico/
+  ingressClass: none           # không có ingress controller; expose bằng NodePort
+  storageClass: local-path     # node-local, PV có nodeAffinity
+  exposure: nodeport           # chỉ truy cập được trong tailnet
+  cni: cilium                  # kubeProxyReplacement — xem K8sSecDaP-infra, role cni_cilium
 
 workloads:
   overlay: onprem

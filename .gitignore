@@ -1,9 +1,13 @@
+# Giá trị secret thật. Chỉ *.env bị loại — thư mục secrets/ VẪN nằm trong Git
+# vì nó chứa bootstrap.sh và *.env.example, tức là phần mô tả secret nào cần
+# tồn tại. Ignore cả secrets/ (như trước đây) sẽ giấu luôn tài liệu đó, và
+# git không hề descend vào thư mục đã bị ignore nên dòng phủ định cũng vô ích.
 *.env
+!*.env.example
 .env*
-secrets/
+!.env.example
 *.key
 *.pem
-# real cloudflared/harbor secrets (keep *.example)
 **/secret.yaml
 !**/secret.yaml.example
 .DS_Store

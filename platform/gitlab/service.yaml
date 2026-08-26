@@ -1,0 +1,34 @@
+# =============================================================================
+# Hai Service, hai vai trò khác nhau:
+#   gitlab           — ClusterIP, headless-adjacent, cho traffic trong cluster
+#   gitlab-nodeport  — NodePort, cho người dùng và git client trên tailnet
+#
+# NodePort nghe trên MỌI node nhờ Cilium kubeProxyReplacement, kể cả node
+# không chạy pod GitLab. Nên http://100.80.0.1:30080 vẫn đúng
+# sau khi pod chuyển node.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+  namespace: gitlab
+spec:
+  type: ClusterIP
+  selector:
+    app: gitlab
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: ssh,  port: 22, targetPort: ssh }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-nodeport
+  namespace: gitlab
+spec:
+  type: NodePort
+  selector:
+    app: gitlab
+  ports:
+    - { name: http, port: 80, targetPort: http, nodePort: 30080 }
+    - { name: ssh,  port: 22, targetPort: ssh,  nodePort: 30022 }

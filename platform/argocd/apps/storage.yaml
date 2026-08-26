@@ -1,0 +1,47 @@
+# =============================================================================
+# local-path-provisioner — StorageClass mặc định.
+#
+# Cluster bare-metal không có CSI nào. GitLab cần PVC, nên phải có provisioner
+# trước. sync-wave "-1" đảm bảo nó xong trước mọi app xin PVC.
+#
+# Đánh đổi cần biết rõ: volume nằm trên đĩa local của node, KHÔNG di chuyển
+# theo pod. Pod GitLab rời node là mất dữ liệu — vì thế GitLab StatefulSet
+# không được để scheduler tự do đổi node (xem platform/gitlab/README.md).
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: storage-local-path
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rancher/local-path-provisioner
+    targetRevision: v0.0.30
+    path: deploy/chart/local-path-provisioner
+    helm:
+      valuesObject:
+        storageClass:
+          defaultClass: true
+          name: local-path
+          reclaimPolicy: Retain
+        nodePathMap:
+          - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+            paths:
+              - /opt/local-path-provisioner
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits:   { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-path-storage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

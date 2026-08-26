@@ -1,0 +1,76 @@
+# =============================================================================
+# GitLab Runner — executor kubernetes.
+#
+# sync-wave "1": runner cần GitLab đã chạy VÀ cần runner authentication token
+# lấy từ UI GitLab, nên nó bắt buộc đứng sau.
+#
+# Token nằm trong Secret gitlab-runner-secret (không có trong Git):
+#   platform/gitlab-runner/secrets/bootstrap.sh
+#
+# KHÔNG bật privileged: pipeline trong ci-templates/ chỉ chạy Trivy, Gitleaks,
+# Semgrep — tất cả đều là process thường, không cần Docker-in-Docker.
+# Bật privileged chỉ để "cho chắc" là cách nhanh nhất biến mọi job CI thành
+# quyền root trên node.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitlab-runner
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.gitlab.io
+    chart: gitlab-runner
+    targetRevision: 0.71.0
+    helm:
+      valuesObject:
+        # Dùng ĐÚNG external_url của GitLab chứ không phải Service nội bộ.
+        # Runner gọi qua Service thì Host header lệch với external_url và
+        # các URL GitLab trả về (artifact, trace) trỏ sai. Đi vòng ra
+        # NodePort rồi quay lại tốn thêm một hop, đổi lấy một URL duy nhất
+        # đúng ở mọi nơi.
+        gitlabUrl: http://100.80.0.1:30080
+        # Token do bootstrap.sh tạo; chart chỉ đọc, không tự đăng ký.
+        runners:
+          secret: gitlab-runner-secret
+          config: |
+            [[runners]]
+              name = "k8s-shared"
+              executor = "kubernetes"
+              [runners.kubernetes]
+                namespace = "gitlab-runner"
+                image = "alpine:3.21"
+                privileged = false
+                cpu_request = "100m"
+                memory_request = "256Mi"
+                memory_limit = "2Gi"
+                helper_cpu_request = "50m"
+                helper_memory_request = "128Mi"
+                service_account = "gitlab-runner"
+                poll_timeout = 600
+              [runners.cache]
+                Type = "local"
+        concurrent: 4
+        checkInterval: 10
+        rbac:
+          create: true
+          serviceAccountName: gitlab-runner
+        metrics:
+          enabled: false
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits:   { memory: 256Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitlab-runner
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

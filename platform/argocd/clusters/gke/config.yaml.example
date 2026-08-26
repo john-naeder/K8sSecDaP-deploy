@@ -21,7 +21,7 @@ platform:
   ingressClass: gce
   storageClass: standard-rwo
   exposure: loadbalancer
-  cni: calico                  # GKE supports Calico via dataplane v2
+  cni: cilium                  # GKE Dataplane V2 chính là Cilium
 
 workloads:
   overlay: gke
