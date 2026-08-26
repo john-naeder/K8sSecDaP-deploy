@@ -1,0 +1,84 @@
+# Velero — backup cluster về MinIO trên ổ HDD 1TB của master.
+#
+# Vì sao dùng File System Backup (kopia) chứ không phải volume snapshot:
+# StorageClass duy nhất ở đây là local-path, và nó không có CSI snapshotter.
+# Không có snapshot thì Velero chỉ backup được object Kubernetes, còn dữ liệu
+# trong PV thì không — tức là backup GitLab mà không có repo nào trong đó.
+# defaultVolumesToFsBackup bật lên để mọi PV được copy nội dung thật.
+
+image:
+  repository: velero/velero
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.13.0
+    volumeMounts:
+      - { name: plugins, mountPath: /target }
+
+# MinIO nói giao thức S3 nhưng không phải AWS: phải ép path-style, vì
+# virtual-host style sẽ thành bucket.minio.velero.svc và không phân giải được.
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: velero
+      default: true
+      credential:
+        name: velero-s3-creds
+        key: cloud
+      config:
+        region: minio
+        s3ForcePathStyle: "true"
+        s3Url: http://minio.velero.svc.cluster.local:9000
+        checksumAlgorithm: ""    # MinIO không nhận CRC32 mà SDK AWS mới gửi mặc định
+  defaultVolumesToFsBackup: true
+  uploaderType: kopia
+
+  # Chart mặc định tạo một VolumeSnapshotLocation tên "default" không khai
+  # provider, và API server từ chối nó. Cluster này không snapshot volume nào
+  # (local-path không có CSI snapshotter) nên danh sách rỗng mới là đúng.
+  volumeSnapshotLocation: []
+
+credentials:
+  useSecret: true
+  existingSecret: velero-s3-creds
+
+# node-agent phải chạy trên MỌI node, kể cả master, vì nó đọc dữ liệu PV từ
+# /var/lib/kubelet trên chính node đang gắn volume đó.
+deployNodeAgent: true
+nodeAgent:
+  tolerations:
+    - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits:   { memory: 1Gi }
+
+resources:
+  requests: { cpu: 50m, memory: 192Mi }
+  limits:   { memory: 512Mi }
+
+# 0 2 */3 * *  = 02:00 các ngày 1,4,7,10,13,16,19,22,25,28,31.
+# Trường ngày đếm từ 1 chứ không từ 0, nên bước nhảy bắt đầu ở ngày 1.
+#
+# Đây KHÔNG phải đúng 72 giờ một lần: mốc cuối tháng cắt chu kỳ, ngày 31 sang
+# ngày 1 chỉ cách 1 ngày, còn tháng 28 ngày thì 28 sang 1 cách 1 ngày. Đổi lại
+# là giờ chạy cố định, dễ đoán. Muốn đúng 72h thì dùng `@every 72h`, nhưng nó
+# trôi dần theo thời điểm tạo schedule và sẽ có lúc rơi vào giữa giờ làm.
+schedules:
+  cluster-full:
+    disabled: false
+    schedule: "0 2 */3 * *"
+    useOwnerReferencesInBackup: false
+    template:
+      ttl: 720h                     # giữ 30 ngày ~ 10 bản
+      storageLocation: default
+      defaultVolumesToFsBackup: true
+      excludedNamespaces:
+        - kube-system               # kubeadm dựng lại được, và etcd mới là thứ đáng backup
+        - velero                    # đừng backup chính chỗ chứa backup
+      snapshotVolumes: false
+
+metrics:
+  enabled: false
+upgradeCRDs: true
+cleanUpCRDs: false

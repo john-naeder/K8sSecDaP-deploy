@@ -1,0 +1,86 @@
+# =============================================================================
+# MinIO — đích lưu backup cho Velero.
+#
+# Velero cần một object store; cluster này không có cái nào. MinIO chạy tại chỗ,
+# ghi thẳng xuống ổ HDD 1TB gắn trên master.
+#
+# hostPath + nodeSelector chứ không dùng PVC là có chủ ý: dữ liệu backup phải
+# nằm trên MỘT ổ cụ thể mà mình biết tên, không phải nơi nào đó do provisioner
+# chọn. local-path sẽ đặt nó lên SSD 220G của hệ thống, tức là backup nằm cùng
+# ổ với thứ nó đang backup.
+#
+# Đây KHÔNG phải off-site backup. Ổ chết là mất cả cluster lẫn backup. Nó bảo
+# vệ khỏi xoá nhầm và cấu hình sai, không bảo vệ khỏi cháy nhà.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: velero
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: velero
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: userver-master
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          envFrom:
+            - secretRef: { name: minio-creds }
+          ports:
+            - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits:   { memory: 768Mi }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: s3 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: s3 }
+            periodSeconds: 30
+      volumes:
+        - name: data
+          hostPath:
+            path: /mnt/backup/velero-minio
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: velero
+spec:
+  selector: { app: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: s3 }
+    - { name: console, port: 9001, targetPort: console }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-console
+  namespace: velero
+spec:
+  type: NodePort
+  selector: { app: minio }
+  ports:
+    - { name: console, port: 9001, targetPort: console, nodePort: 30901 }
