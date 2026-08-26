@@ -19,7 +19,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:john-naeder/K8sSecDaP-deploy.git
+    repoURL: ssh://git@100.80.0.1:30022/root/K8sSecDaP-deploy.git
     targetRevision: main
     path: platform/gitlab
   destination:
