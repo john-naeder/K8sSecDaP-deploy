@@ -42,6 +42,14 @@ spec:
             [[runners]]
               name = "k8s-shared"
               executor = "kubernetes"
+              # Job phải clone qua Service nội bộ, KHÔNG qua external_url.
+              # external_url là địa chỉ tailnet (100.80.0.1:30080), nên nếu để
+              # mặc định thì đường đi là: pod -> tailscale0 của node -> NodePort
+              # -> vòng ngược vào chính cluster. Pod có MTU 1280 và chặng đó
+              # làm gói lớn rơi, biểu hiện đúng như lỗi mạng ngẫu nhiên:
+              # "fetch-pack: unexpected disconnect" và "bad pack header" ở
+              # get_sources, trong khi job nhỏ thì thỉnh thoảng vẫn qua.
+              clone_url = "http://gitlab.gitlab.svc.cluster.local"
               [runners.kubernetes]
                 namespace = "gitlab-runner"
                 image = "alpine:3.21"
