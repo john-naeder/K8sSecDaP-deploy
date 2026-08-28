@@ -55,7 +55,12 @@ spec:
                 poll_timeout = 600
               [runners.cache]
                 Type = "local"
-        concurrent: 4
+        # 2 chứ không phải 4. Các job quét secret dùng GIT_DEPTH: 0 để đọc
+        # được lịch sử, nên mỗi job là một lần clone đầy đủ. Bốn lần cùng lúc
+        # đẩy Gitaly quá sức trên pod GitLab giới hạn 5Gi, và kết quả là
+        # "fetch-pack: unexpected disconnect" ở bước get_sources — trông như
+        # lỗi mạng chứ không lộ ra là thiếu tài nguyên.
+        concurrent: 2
         checkInterval: 10
         rbac:
           create: true
