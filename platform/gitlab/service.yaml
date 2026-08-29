@@ -27,6 +27,22 @@ metadata:
   namespace: gitlab
 spec:
   type: NodePort
+  # Chỉ node ĐANG chạy pod mới phục vụ NodePort này.
+  #
+  # Với "Cluster" (mặc định), mọi node đều mở cổng và node không có pod sẽ
+  # forward sang node có pod. Đường forward đó HỎNG khi gói đi vào bằng
+  # tailscale0: kết nối treo im lặng, SYN retransmit tới hết giờ, và Cilium
+  # không ghi drop nào. tailscale0 là thiết bị L3 (link/none, tun) nên không
+  # có header L2 để redirect sang node khác.
+  #
+  # Đo được, đảo backend thì lỗi đảo theo — không phải node nào xấu:
+  #   coredns (backend ở master):   master 5/5, worker-1 0/5, worker-2 0/5
+  #   gitlab  (backend ở worker-1): worker-1 5/5, master 0/5, worker-2 0/5
+  #
+  # "Local" biến trường hợp chạy được thành trường hợp DUY NHẤT: node không có
+  # pod sẽ từ chối ngay thay vì treo, và source IP của client được giữ nguyên.
+  # gitlab-0 bị ghim vào worker-1 bởi PV local-path nên địa chỉ này ổn định.
+  externalTrafficPolicy: Local
   selector:
     app: gitlab
   ports:
